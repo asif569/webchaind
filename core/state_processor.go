@@ -18,8 +18,8 @@
 package core
 
 import (
-	"math/big"
 	"fmt"
+	"math/big"
 
 	"github.com/webchain-network/webchaind/core/state"
 	"github.com/webchain-network/webchaind/core/types"
@@ -80,10 +80,10 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB) (ty
 			}
 		}
 		statedb.StartRecord(tx.Hash(), block.Hash(), i)
-		if !UseSputnikVM {
+		if UseSputnikVM != "true" {
 			receipt, logs, _, err := ApplyTransaction(p.config, p.bc, gp, statedb, header, tx, totalUsedGas)
 			if err != nil {
-				return nil, nil, totalUsedGas, err
+				return nil, nil, nil, err
 			}
 			receipts = append(receipts, receipt)
 			allLogs = append(allLogs, logs...)
@@ -91,7 +91,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB) (ty
 		}
 		receipt, logs, _, err := ApplyMultiVmTransaction(p.config, p.bc, gp, statedb, header, tx, totalUsedGas)
 		if err != nil {
-			return nil, nil, totalUsedGas, err
+			return nil, nil, nil, err
 		}
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, logs...)
@@ -109,14 +109,21 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB) (ty
 func ApplyTransaction(config *ChainConfig, bc *BlockChain, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *big.Int) (*types.Receipt, vm.Logs, *big.Int, error) {
 	tx.SetSigner(config.GetSigner(header.Number))
 
-	_, gas, err := ApplyMessage(NewEnv(statedb, config, bc, tx, header), tx, gp)
+	_, gas, failed, err := ApplyMessage(NewEnv(statedb, config, bc, tx, header), tx, gp)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// Update the state with pending changes
+	var root []byte
+	if config.IsAtlantis(header.Number) {
+		statedb.Finalise(true)
+	} else {
+		root = statedb.IntermediateRoot(config.IsAtlantis(header.Number)).Bytes()
+	}
+
 	usedGas.Add(usedGas, gas)
-	receipt := types.NewReceipt(statedb.IntermediateRoot(false).Bytes(), usedGas)
+	receipt := types.NewReceipt(root, usedGas)
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = new(big.Int).Set(gas)
 	if MessageCreatesContract(tx) {
@@ -127,6 +134,11 @@ func ApplyTransaction(config *ChainConfig, bc *BlockChain, gp *GasPool, statedb 
 	logs := statedb.GetLogs(tx.Hash())
 	receipt.Logs = logs
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
+	if failed {
+		receipt.Status = types.TxFailure
+	} else {
+		receipt.Status = types.TxSuccess
+	}
 
 	glog.V(logger.Debug).Infoln(receipt)
 
@@ -187,12 +199,20 @@ func GetBlockWinnerRewardForUnclesByEra(era *big.Int, uncles []*types.Header) *b
 
 // GetRewardByEra gets a block reward at disinflation rate.
 // Constants MaxBlockReward, DisinflationRateQuotient, and DisinflationRateDivisor assumed.
-func GetBlockWinnerRewardByEra(era *big.Int) *big.Int {
+func GetBlockWinnerRewardByEra(eraOrig *big.Int) *big.Int {
 	MaximumBlockReward := big.NewInt(5e+18) // 5 WEB
 	MaximumBlockReward.Mul(MaximumBlockReward, big.NewInt(10)) // 50 WEB
 
+	era := new(big.Int).Set(eraOrig)
+
 	if era.Cmp(big.NewInt(0)) == 0 {
 		return new(big.Int).Set(MaximumBlockReward)
+	}
+
+	if era.Cmp(big.NewInt(45)) >= 0 && era.Cmp(big.NewInt(50)) < 0 {
+		era.Add(era, big.NewInt(475)) // skip 475 eras due to reward decrease
+	} else if era.Cmp(big.NewInt(56)) >= 0 {
+		era.Add(era, big.NewInt(865)) // skip 865 eras due to reward decrease
 	}
 
 	// MaxBlockReward _r_ * (249/250)**era == MaxBlockReward * (249**era) / (250**era)
@@ -205,6 +225,21 @@ func GetBlockWinnerRewardByEra(era *big.Int) *big.Int {
 
 	r.Mul(MaximumBlockReward, q)
 	r.Div(r, d)
+
+	if era.Cmp(big.NewInt(36)) >= 0 && era.Cmp(big.NewInt(45)) < 0 {
+		rewards := []int64{2000, 1300, 1200, 1100, 1000, 900, 800, 700, 625}
+		r.Mul(big.NewInt(rewards[era.Int64()-36]), big.NewInt(10000000000000000))
+	} else if era.Cmp(big.NewInt(50)) >= 0 && era.Cmp(big.NewInt(56)) < 0 {
+		rewards := []int64{500, 400, 300, 225, 160, 125}
+		r.Mul(big.NewInt(rewards[era.Int64()-50]), big.NewInt(10000000000000000))
+	} else if era.Cmp(big.NewInt(33)) >= 0 && era.Cmp(big.NewInt(36)) < 0 {
+		// r - (r/2/(45-33) * (era-33+1))
+		r = GetBlockWinnerRewardByEra(big.NewInt(33-1))
+		r2 := new(big.Int)
+		r2.Div(r, big.NewInt(2*(45-33)))
+		r2.Mul(r2, big.NewInt(era.Int64()-33+1))
+		r.Sub(r, r2)
+	}
 
 	return r
 }

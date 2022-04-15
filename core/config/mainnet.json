@@ -62,6 +62,34 @@
                 "name": "LYRA2v2",
                 "block": 2619000,
                 "requiredHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+                "name": "Atlantis",
+                "block": 3300001,
+                "features": [
+                    {
+                        "id": "difficulty",
+                        "options": {
+                            "type": "atlantis"
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "Halving",
+                "block": 3300001
+            },
+            {
+                "name": "Reward",
+                "block": 3600001
+            },
+            {
+                "name": "Reward2",
+                "block": 5000001
+            },
+            {
+                "name": "Stop",
+                "block": 7200000
             }
         ],
         "badHashes": [

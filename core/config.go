@@ -113,7 +113,7 @@ type StateConfig struct {
 }
 
 // GenesisDump is the geth JSON format.
-// https://github.com/ethereumproject/wiki/wiki/Ethereum-Chain-Spec-Format#subformat-genesis
+// https://github.com/eth-classic/wiki/wiki/Ethereum-Chain-Spec-Format#subformat-genesis
 type GenesisDump struct {
 	Nonce      prefixedHex `json:"nonce"`
 	Timestamp  prefixedHex `json:"timestamp"`
@@ -307,6 +307,10 @@ func (c *ChainConfig) GetLYRA2v2Block() uint64 {
 	return c.ForkByName("LYRA2v2").Block.Uint64()
 }
 
+func (c *ChainConfig) GetStopBlock() uint64 {
+	return c.ForkByName("Stop").Block.Uint64()
+}
+
 // IsHomestead returns whether num is either equal to the homestead block or greater.
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	if c.ForkByName("Homestead").Block == nil || num == nil {
@@ -353,7 +357,11 @@ func (c *ChainConfig) IsHardfork2(num *big.Int) bool {
 
 // IsAtlantis returns true if num is greater than atlantic config block
 func (c *ChainConfig) IsAtlantis(num *big.Int) bool {
-	return c.IsHardfork2(num)
+	fork := c.ForkByName("Atlantis")
+	if fork.Block == nil || num == nil {
+		return false
+	}
+	return num.Cmp(fork.Block) >= 0
 }
 
 // ForkByName looks up a Fork by its name, assumed to be unique
